@@ -32,10 +32,14 @@ def load_completed():
                 completed.setdefault(editor, set()).add(suburb)
     return completed
 
-# --- Save completed suburbs ---
+# --- Save completed suburbs (Append/remove logic) ---
 def save_completed(editor, suburbs_selected):
     completed = load_completed()
+
+    # Update editor's suburbs with new selection
     completed[editor] = set(suburbs_selected)
+
+    # Rewrite entire CSV with updated values
     with open(SAVE_FILE, "w", newline="") as f:
         writer = csv.writer(f)
         for ed, subs in completed.items():
