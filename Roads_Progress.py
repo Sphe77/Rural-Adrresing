@@ -4,7 +4,6 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
-import fiona
 from branca.element import Template, MacroElement  # For legend
 
 # --- Load shapefile from local path ---
