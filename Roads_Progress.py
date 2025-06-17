@@ -4,58 +4,84 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
-from branca.element import Template, MacroElement  # For legend
+import fiona
+import csv
+from branca.element import Template, MacroElement
 
-# --- Load shapefile from local path ---
+SAVE_FILE = "completed_suburbs.csv"
+
+# --- Load shapefile ---
 @st.cache_data
 def load_shapefile():
     shp_path = "data/Rural_Suburbs_Allocation.shp"
-    
     if not os.path.exists(shp_path):
         raise FileNotFoundError(f"Shapefile not found at {shp_path}")
-    
     gdf = gpd.read_file(shp_path)
-    gdf = gdf.to_crs(epsg=4326)  # Reproject for folium compatibility
+    gdf = gdf.to_crs(epsg=4326)
     return gdf
+
+# --- Load completed suburbs ---
+def load_completed():
+    completed = {}
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) < 2:
+                    continue
+                editor, suburb = row
+                completed.setdefault(editor, set()).add(suburb)
+    return completed
+
+# --- Save completed suburbs ---
+def save_completed(editor, suburbs_selected):
+    completed = load_completed()
+    completed[editor] = set(suburbs_selected)
+    with open(SAVE_FILE, "w", newline="") as f:
+        writer = csv.writer(f)
+        for ed, subs in completed.items():
+            for suburb in subs:
+                writer.writerow([ed, suburb])
+
+# --- Assign editor colors ---
+def get_editor_colors(editor_list):
+    palette = [
+        "red", "blue", "green", "orange", "purple",
+        "pink", "cyan", "lime", "brown", "magenta"
+    ]
+    color_map = {}
+    for i, editor in enumerate(editor_list):
+        color_map[editor] = palette[i % len(palette)]
+    return color_map
 
 # --- Page setup ---
 st.set_page_config(layout="wide")
 st.title("🛣️ Rural Road Editing Progress Tracker")
 st.markdown("Monitor editor progress by suburb (based on shapefile).")
 
-# --- Load and validate data ---
+# --- Load data ---
 gdf = load_shapefile()
+completed_suburbs_by_editor = load_completed()
 
 required_cols = {"NAME", "Assigned"}
 if not required_cols.issubset(gdf.columns):
     st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
     st.stop()
 
-# --- Initialize session state ---
-if "editor_suburb_map" not in st.session_state:
-    st.session_state.editor_suburb_map = {}
-
-# --- Editor selection ---
 editors = sorted(gdf["Assigned"].dropna().unique())
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
-# --- Get suburbs for editor ---
 editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("NAME")
 editor_suburb_names = editor_suburbs_df["NAME"].tolist()
+previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
 
-# --- Track editor's selections ---
-if selected_editor not in st.session_state.editor_suburb_map:
-    st.session_state.editor_suburb_map[selected_editor] = set()
-
-# --- Suburb selection multiselect ---
-previously_selected = list(st.session_state.editor_suburb_map[selected_editor])
+# --- Suburb selection ---
 selected_suburbs = st.sidebar.multiselect(
     f"✅ Select suburbs completed by {selected_editor}",
     options=editor_suburb_names,
     default=previously_selected
 )
 
-# --- Display completed suburbs ---
 if selected_suburbs:
     st.sidebar.markdown("### 🟢 Suburbs marked as completed:")
     for suburb in sorted(selected_suburbs):
@@ -63,37 +89,38 @@ if selected_suburbs:
 else:
     st.sidebar.info("No suburbs marked as completed yet.")
 
-# --- Update session state ---
-st.session_state.editor_suburb_map[selected_editor] = set(selected_suburbs)
+save_completed(selected_editor, selected_suburbs)
+completed_suburbs_by_editor = load_completed()
 
-# --- Aggregate all completed suburbs ---
-all_completed_suburbs = set()
-for subs in st.session_state.editor_suburb_map.values():
-    all_completed_suburbs.update(subs)
+# --- Assign color per suburb ---
+editor_colors = get_editor_colors(editors)
 
-# --- Assign status to suburbs ---
-gdf["status"] = gdf["NAME"].apply(
-    lambda s: "Complete" if s in all_completed_suburbs else "Not Started"
-)
+def determine_status(row):
+    for editor, suburbs in completed_suburbs_by_editor.items():
+        if row["NAME"] in suburbs:
+            return "Complete", editor
+    return "Not Started", None
 
-# --- Map of suburb status ---
+status_editor_list = gdf.apply(lambda row: determine_status(row), axis=1)
+gdf["status"] = status_editor_list.str[0]
+gdf["EditorDone"] = status_editor_list.str[1]
+
+# --- Map ---
 st.subheader("🗺️ Map of Suburb Completion Status")
 
-def get_color(status):
-    return {
-        "Complete": "green",
-        "Not Started": "gray"
-    }.get(status, "gray")
+def get_color(row):
+    if row["status"] == "Complete" and row["EditorDone"] in editor_colors:
+        return editor_colors[row["EditorDone"]]
+    return "gray"
 
-# Create map
 m = folium.Map(location=[-29.85, 30.98], zoom_start=10)
 
-# Add suburbs to map
 for _, row in gdf.iterrows():
+    color = get_color(row)
     folium.GeoJson(
         row["geometry"],
-        style_function=lambda _, status=row["status"]: {
-            "fillColor": get_color(status),
+        style_function=lambda _, color=color: {
+            "fillColor": color,
             "color": "black",
             "weight": 0.5,
             "fillOpacity": 0.5
@@ -101,9 +128,14 @@ for _, row in gdf.iterrows():
         tooltip=f"{row['NAME']} ({row['Assigned']}) - {row['status']}"
     ).add_to(m)
 
-# --- Add custom legend using MacroElement ---
-legend_template = """
-{% macro html(this, kwargs) %}
+# --- Build dynamic legend ---
+legend_items = ""
+for editor, color in editor_colors.items():
+    legend_items += f"""<i style='background:{color};width:12px;height:12px;display:inline-block;'></i> {editor}<br>"""
+legend_items += "<i style='background:gray;width:12px;height:12px;display:inline-block;'></i> Not Started"
+
+legend_template = f"""
+{{% macro html(this, kwargs) %}}
 <div style="
     position: fixed;
     bottom: 40px;
@@ -116,19 +148,18 @@ legend_template = """
     font-size: 14px;
 ">
     <b>Legend</b><br>
-    <i style="background:green; width:12px; height:12px; display:inline-block;"></i> Suburb Completed<br>
-    <i style="background:gray; width:12px; height:12px; display:inline-block;"></i> Suburb Not Done
+    {legend_items}
 </div>
-{% endmacro %}
+{{% endmacro %}}
 """
+
 legend = MacroElement()
 legend._template = Template(legend_template)
 m.get_root().add_child(legend)
 
-# --- Render map ---
 st_folium(m, width=1000, height=600)
 
-# --- Overall progress ---
+# --- Overall Progress ---
 st.subheader("📊 Overall Progress")
 total_suburbs = len(gdf)
 completed_total = len(gdf[gdf["status"] == "Complete"])
@@ -137,12 +168,12 @@ progress_percent = round((completed_total / total_suburbs) * 100, 1)
 st.write(f"**{completed_total} / {total_suburbs} suburbs completed ({progress_percent}%)**")
 st.progress(completed_total / total_suburbs)
 
-# --- Editor progress summary ---
+# --- Editor Progress Summary ---
 st.subheader("👥 Editor Progress Summary")
 summary = []
 for editor in editors:
     editor_df = gdf[gdf["Assigned"] == editor]
-    completed = len(editor_df[editor_df["status"] == "Complete"])
+    completed = len(editor_df[editor_df["NAME"].isin(completed_suburbs_by_editor.get(editor, set()))])
     total = len(editor_df)
     summary.append({
         "Editor": editor,
@@ -153,4 +184,5 @@ for editor in editors:
 
 summary_df = pd.DataFrame(summary)
 st.dataframe(summary_df, use_container_width=True)
+
 
