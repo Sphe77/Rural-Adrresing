@@ -4,7 +4,6 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
-import fiona
 import csv
 from branca.element import Template, MacroElement
 
