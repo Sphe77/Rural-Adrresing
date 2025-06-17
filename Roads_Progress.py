@@ -1,14 +1,20 @@
+import os
 import streamlit as st
 import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
+import fiona
 from branca.element import Template, MacroElement  # For legend
 
-# --- Load shapefile ---
+# --- Load shapefile from local path ---
 @st.cache_data
 def load_shapefile():
-    shp_path = r"C:\Users\sphelele.ntilane\OneDrive - eThekwini Municipality\Desktop\Streamlit\Rural addressing\Rural_Suburbs_Allocation.shp"
+    shp_path = "data/Rural_Suburbs_Allocation.shp"
+    
+    if not os.path.exists(shp_path):
+        raise FileNotFoundError(f"Shapefile not found at {shp_path}")
+    
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)  # Reproject for folium compatibility
     return gdf
