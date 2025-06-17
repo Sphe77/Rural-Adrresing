@@ -184,5 +184,3 @@ for editor in editors:
 
 summary_df = pd.DataFrame(summary)
 st.dataframe(summary_df, use_container_width=True)
-
-
