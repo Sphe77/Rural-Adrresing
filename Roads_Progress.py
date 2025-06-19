@@ -1,4 +1,5 @@
 import os
+import socket
 import streamlit as st
 import geopandas as gpd
 import folium
@@ -8,6 +9,7 @@ import csv
 from branca.element import Template, MacroElement
 
 SAVE_FILE = "completed_suburbs.csv"
+ON_CLOUD = "streamlitapp.com" in socket.gethostname()
 
 # --- Load shapefile ---
 @st.cache_data
@@ -21,6 +23,8 @@ def load_shapefile():
 
 # --- Load completed suburbs ---
 def load_completed():
+    if ON_CLOUD:
+        return st.session_state.get("completed_suburbs", {})
     completed = {}
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, newline="") as f:
@@ -34,6 +38,10 @@ def load_completed():
 
 # --- Save completed suburbs ---
 def save_completed(editor, suburbs_selected):
+    if ON_CLOUD:
+        st.session_state.setdefault("completed_suburbs", {})
+        st.session_state["completed_suburbs"][editor] = set(suburbs_selected)
+        return
     completed = load_completed()
     completed[editor] = set(suburbs_selected)
     with open(SAVE_FILE, "w", newline="") as f:
@@ -48,10 +56,7 @@ def get_editor_colors(editor_list):
         "red", "blue", "green", "orange", "purple",
         "pink", "cyan", "lime", "brown", "magenta"
     ]
-    color_map = {}
-    for i, editor in enumerate(editor_list):
-        color_map[editor] = palette[i % len(palette)]
-    return color_map
+    return {editor: palette[i % len(palette)] for i, editor in enumerate(editor_list)}
 
 # --- Page setup ---
 st.set_page_config(layout="wide")
@@ -91,9 +96,7 @@ else:
 save_completed(selected_editor, selected_suburbs)
 completed_suburbs_by_editor = load_completed()
 
-# --- Assign color per suburb ---
-editor_colors = get_editor_colors(editors)
-
+# --- Determine completion status per suburb ---
 def determine_status(row):
     for editor, suburbs in completed_suburbs_by_editor.items():
         if row["NAME"] in suburbs:
@@ -104,7 +107,10 @@ status_editor_list = gdf.apply(lambda row: determine_status(row), axis=1)
 gdf["status"] = status_editor_list.str[0]
 gdf["EditorDone"] = status_editor_list.str[1]
 
-# --- Map ---
+# --- Assign color per editor ---
+editor_colors = get_editor_colors(editors)
+
+# --- Map rendering ---
 st.subheader("🗺️ Map of Suburb Completion Status")
 
 def get_color(row):
@@ -127,7 +133,7 @@ for _, row in gdf.iterrows():
         tooltip=f"{row['NAME']} ({row['Assigned']}) - {row['status']}"
     ).add_to(m)
 
-# --- Build dynamic legend ---
+# --- Dynamic legend ---
 legend_items = ""
 for editor, color in editor_colors.items():
     legend_items += f"""<i style='background:{color};width:12px;height:12px;display:inline-block;'></i> {editor}<br>"""
