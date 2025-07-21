@@ -1,6 +1,6 @@
-streamlit
-pandas
+gspread
+oauth2client
 geopandas
-folium
 streamlit-folium
-branca
+folium
+pandas
