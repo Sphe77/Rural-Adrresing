@@ -10,6 +10,7 @@ from branca.element import Template, MacroElement
 
 SAVE_FILE = "completed_suburbs.csv"
 ON_CLOUD = "streamlitapp.com" in socket.gethostname()
+INIT_DONE_FLAG = "init_from_csv_done"
 
 # --- Load shapefile ---
 @st.cache_data
@@ -21,19 +22,33 @@ def load_shapefile():
     gdf = gdf.to_crs(epsg=4326)
     return gdf
 
-# --- Load completed suburbs ---
+# --- Load completed suburbs from CSV and associate with editors ---
 def load_completed():
     if ON_CLOUD:
+        if not st.session_state.get(INIT_DONE_FLAG):
+            completed = {}
+            if os.path.exists(SAVE_FILE):
+                with open(SAVE_FILE, newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f, delimiter="\t")
+                    for row in reader:
+                        editor = row["Editor"].strip()
+                        suburb = row["Suburb"].strip().upper()
+                        completed.setdefault(editor, set()).add(suburb)
+                st.session_state["completed_suburbs"] = completed
+                st.session_state[INIT_DONE_FLAG] = True
+            else:
+                st.session_state["completed_suburbs"] = {}
         return st.session_state.get("completed_suburbs", {})
+
+    # Local (non-cloud) behavior
     completed = {}
     if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE, newline="") as f:
-            reader = csv.reader(f)
+        with open(SAVE_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
-                if len(row) < 2:
-                    continue
-                editor, suburb = row
-                completed.setdefault(editor.strip(), set()).add(suburb.strip().title())
+                editor = row["Editor"].strip()
+                suburb = row["Suburb"].strip().upper()
+                completed.setdefault(editor, set()).add(suburb)
     return completed
 
 # --- Save completed suburbs ---
@@ -43,9 +58,10 @@ def save_completed(editor, suburbs_selected):
         st.session_state["completed_suburbs"][editor] = set(suburbs_selected)
         return
     completed = load_completed()
-    completed[editor] = set(suburbs_selected)
-    with open(SAVE_FILE, "w", newline="") as f:
-        writer = csv.writer(f)
+    completed[editor] = set(suburb.upper() for suburb in suburbs_selected)
+    with open(SAVE_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["Editor", "Suburb"])
         for ed, subs in completed.items():
             for suburb in subs:
                 writer.writerow([ed, suburb])
@@ -80,7 +96,7 @@ if not editors:
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
 editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("SUBURB")
-editor_suburb_names = editor_suburbs_df["SUBURB"].tolist()
+editor_suburb_names = [s.strip().upper() for s in editor_suburbs_df["SUBURB"].tolist()]
 previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
 
 # --- Suburb selection ---
@@ -103,7 +119,7 @@ completed_suburbs_by_editor = load_completed()
 # --- Determine completion status per suburb ---
 def determine_status(row):
     for editor, suburbs in completed_suburbs_by_editor.items():
-        if row["SUBURB"] in suburbs:
+        if row["SUBURB"].strip().upper() in suburbs:
             return "Complete", editor
     return "Not Started", None
 
@@ -183,7 +199,7 @@ st.subheader("👥 Editor Progress Summary")
 summary = []
 for editor in editors:
     editor_df = gdf[gdf["Assigned"] == editor]
-    completed = len(editor_df[editor_df["SUBURB"].isin(completed_suburbs_by_editor.get(editor, set()))])
+    completed = len(editor_df[editor_df["SUBURB"].apply(lambda s: s.strip().upper()).isin(completed_suburbs_by_editor.get(editor, set()))])
     total = len(editor_df)
     summary.append({
         "Editor": editor,
