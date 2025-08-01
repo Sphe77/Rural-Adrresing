@@ -5,12 +5,10 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
-import csv
 from branca.element import Template, MacroElement
 
 SAVE_FILE = "completed_suburbs.csv"
 ON_CLOUD = "streamlitapp.com" in socket.gethostname()
-INIT_DONE_FLAG = "init_from_csv_done"
 
 # --- Load shapefile ---
 @st.cache_data
@@ -20,35 +18,26 @@ def load_shapefile():
         raise FileNotFoundError(f"Shapefile not found at {shp_path}")
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)
+
+    required_cols = {"SUBURB", "Assigned"}
+    if not required_cols.issubset(gdf.columns):
+        st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
+        st.stop()
+
     return gdf
 
-# --- Load completed suburbs from CSV and associate with editors ---
+# --- Load completed suburbs ---
 def load_completed():
-    if ON_CLOUD:
-        if not st.session_state.get(INIT_DONE_FLAG):
-            completed = {}
-            if os.path.exists(SAVE_FILE):
-                with open(SAVE_FILE, newline="", encoding="utf-8") as f:
-                    reader = csv.DictReader(f, delimiter="\t")
-                    for row in reader:
-                        editor = row["Editor"].strip()
-                        suburb = row["Suburb"].strip().upper()
-                        completed.setdefault(editor, set()).add(suburb)
-                st.session_state["completed_suburbs"] = completed
-                st.session_state[INIT_DONE_FLAG] = True
-            else:
-                st.session_state["completed_suburbs"] = {}
-        return st.session_state.get("completed_suburbs", {})
-
-    # Local (non-cloud) behavior
     completed = {}
     if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f, delimiter="\t")
-            for row in reader:
+        try:
+            df = pd.read_csv(SAVE_FILE)
+            for _, row in df.iterrows():
                 editor = row["Editor"].strip()
-                suburb = row["Suburb"].strip().upper()
+                suburb = row["Suburb"].strip()
                 completed.setdefault(editor, set()).add(suburb)
+        except Exception as e:
+            st.error(f"Error reading {SAVE_FILE}: {e}")
     return completed
 
 # --- Save completed suburbs ---
@@ -58,13 +47,12 @@ def save_completed(editor, suburbs_selected):
         st.session_state["completed_suburbs"][editor] = set(suburbs_selected)
         return
     completed = load_completed()
-    completed[editor] = set(suburb.upper() for suburb in suburbs_selected)
-    with open(SAVE_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["Editor", "Suburb"])
+    completed[editor] = set(suburbs_selected)
+    with open(SAVE_FILE, "w", newline="") as f:
+        f.write("Editor,Suburb\n")
         for ed, subs in completed.items():
             for suburb in subs:
-                writer.writerow([ed, suburb])
+                f.write(f"{ed},{suburb}\n")
 
 # --- Assign editor colors ---
 def get_editor_colors(editor_list):
@@ -83,20 +71,11 @@ st.markdown("Monitor editor progress by suburb (based on shapefile).")
 gdf = load_shapefile()
 completed_suburbs_by_editor = load_completed()
 
-required_cols = {"SUBURB", "Assigned"}
-if not required_cols.issubset(gdf.columns):
-    st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
-    st.stop()
-
 editors = sorted(gdf["Assigned"].dropna().unique())
-if not editors:
-    st.error("No editors assigned in the shapefile. Please check the 'Assigned' column.")
-    st.stop()
-
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
 editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("SUBURB")
-editor_suburb_names = [s.strip().upper() for s in editor_suburbs_df["SUBURB"].tolist()]
+editor_suburb_names = editor_suburbs_df["SUBURB"].tolist()
 previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
 
 # --- Suburb selection ---
@@ -119,12 +98,13 @@ completed_suburbs_by_editor = load_completed()
 # --- Determine completion status per suburb ---
 def determine_status(row):
     for editor, suburbs in completed_suburbs_by_editor.items():
-        if row["SUBURB"].strip().upper() in suburbs:
+        if row["SUBURB"] in suburbs:
             return "Complete", editor
     return "Not Started", None
 
 status_editor_list = gdf.apply(lambda row: determine_status(row), axis=1)
-gdf[["status", "EditorDone"]] = pd.DataFrame(status_editor_list.tolist(), index=gdf.index)
+gdf["status"] = status_editor_list.str[0]
+gdf["EditorDone"] = status_editor_list.str[1]
 
 # --- Assign color per editor ---
 editor_colors = get_editor_colors(editors)
@@ -162,16 +142,14 @@ legend_template = f"""
 {{% macro html(this, kwargs) %}}
 <div style="
     position: fixed;
-    bottom: 10px;
-    left: 10px;
+    bottom: 40px;
+    left: 40px;
     z-index: 9999;
     background-color: white;
     padding: 10px;
     border: 2px solid grey;
     box-shadow: 2px 2px 6px rgba(0,0,0,0.3);
     font-size: 14px;
-    max-height: 300px;
-    overflow-y: auto;
 ">
     <b>Legend</b><br>
     {legend_items}
@@ -199,7 +177,7 @@ st.subheader("👥 Editor Progress Summary")
 summary = []
 for editor in editors:
     editor_df = gdf[gdf["Assigned"] == editor]
-    completed = len(editor_df[editor_df["SUBURB"].apply(lambda s: s.strip().upper()).isin(completed_suburbs_by_editor.get(editor, set()))])
+    completed = len(editor_df[editor_df["SUBURB"].isin(completed_suburbs_by_editor.get(editor, set()))])
     total = len(editor_df)
     summary.append({
         "Editor": editor,
