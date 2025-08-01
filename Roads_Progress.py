@@ -67,7 +67,7 @@ st.markdown("Monitor editor progress by suburb (based on shapefile).")
 gdf = load_shapefile()
 completed_suburbs_by_editor = load_completed()
 
-required_cols = {"NAME", "Assigned"}
+required_cols = {"SUBURB", "Assigned"}
 if not required_cols.issubset(gdf.columns):
     st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
     st.stop()
@@ -76,7 +76,7 @@ editors = sorted(gdf["Assigned"].dropna().unique())
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
 editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("NAME")
-editor_suburb_names = editor_suburbs_df["NAME"].tolist()
+editor_suburb_names = editor_suburbs_df["SUBURB"].tolist()
 previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
 
 # --- Suburb selection ---
@@ -99,7 +99,7 @@ completed_suburbs_by_editor = load_completed()
 # --- Determine completion status per suburb ---
 def determine_status(row):
     for editor, suburbs in completed_suburbs_by_editor.items():
-        if row["NAME"] in suburbs:
+        if row["SUBURB"] in suburbs:
             return "Complete", editor
     return "Not Started", None
 
@@ -130,7 +130,7 @@ for _, row in gdf.iterrows():
             "weight": 0.5,
             "fillOpacity": 0.5
         },
-        tooltip=f"{row['NAME']} ({row['Assigned']}) - {row['status']}"
+        tooltip=f"{row['SUBURB']} ({row['Assigned']}) - {row['status']}"
     ).add_to(m)
 
 # --- Dynamic legend ---
@@ -178,7 +178,7 @@ st.subheader("👥 Editor Progress Summary")
 summary = []
 for editor in editors:
     editor_df = gdf[gdf["Assigned"] == editor]
-    completed = len(editor_df[editor_df["NAME"].isin(completed_suburbs_by_editor.get(editor, set()))])
+    completed = len(editor_df[editor_df["SUBURB"].isin(completed_suburbs_by_editor.get(editor, set()))])
     total = len(editor_df)
     summary.append({
         "Editor": editor,
