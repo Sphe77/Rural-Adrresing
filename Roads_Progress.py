@@ -5,6 +5,7 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import pandas as pd
+import csv
 from branca.element import Template, MacroElement
 
 SAVE_FILE = "completed_suburbs.csv"
@@ -18,41 +19,33 @@ def load_shapefile():
         raise FileNotFoundError(f"Shapefile not found at {shp_path}")
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)
-
-    required_cols = {"SUBURB", "Assigned"}
-    if not required_cols.issubset(gdf.columns):
-        st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
-        st.stop()
-
     return gdf
 
 # --- Load completed suburbs ---
 def load_completed():
     completed = {}
     if os.path.exists(SAVE_FILE):
-        try:
-            df = pd.read_csv(SAVE_FILE)
-            for _, row in df.iterrows():
-                editor = row["Editor"].strip()
-                suburb = row["Suburb"].strip()
+        df = pd.read_csv(SAVE_FILE)
+        if "Editor" not in df.columns or "Suburb" not in df.columns:
+            st.warning("completed_suburbs.csv is missing 'Editor' or 'Suburb' column.")
+            return completed
+        for _, row in df.iterrows():
+            editor = str(row["Editor"]).strip()
+            suburb = str(row["Suburb"]).strip()
+            if editor and suburb:
                 completed.setdefault(editor, set()).add(suburb)
-        except Exception as e:
-            st.error(f"Error reading {SAVE_FILE}: {e}")
     return completed
 
 # --- Save completed suburbs ---
 def save_completed(editor, suburbs_selected):
-    if ON_CLOUD:
-        st.session_state.setdefault("completed_suburbs", {})
-        st.session_state["completed_suburbs"][editor] = set(suburbs_selected)
-        return
     completed = load_completed()
     completed[editor] = set(suburbs_selected)
     with open(SAVE_FILE, "w", newline="") as f:
-        f.write("Editor,Suburb\n")
+        writer = csv.writer(f)
+        writer.writerow(["Editor", "Suburb"])
         for ed, subs in completed.items():
             for suburb in subs:
-                f.write(f"{ed},{suburb}\n")
+                writer.writerow([ed, suburb])
 
 # --- Assign editor colors ---
 def get_editor_colors(editor_list):
@@ -71,6 +64,11 @@ st.markdown("Monitor editor progress by suburb (based on shapefile).")
 gdf = load_shapefile()
 completed_suburbs_by_editor = load_completed()
 
+required_cols = {"SUBURB", "Assigned"}
+if not required_cols.issubset(gdf.columns):
+    st.error(f"Shapefile is missing required columns: {required_cols - set(gdf.columns)}")
+    st.stop()
+
 editors = sorted(gdf["Assigned"].dropna().unique())
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
@@ -82,7 +80,7 @@ previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set(
 selected_suburbs = st.sidebar.multiselect(
     f"✅ Select suburbs completed by {selected_editor}",
     options=editor_suburb_names,
-    default=previously_selected
+    default=[s for s in previously_selected if s in editor_suburb_names]
 )
 
 if selected_suburbs:
@@ -92,6 +90,7 @@ if selected_suburbs:
 else:
     st.sidebar.info("No suburbs marked as completed yet.")
 
+# --- Save and reload completed ---
 save_completed(selected_editor, selected_suburbs)
 completed_suburbs_by_editor = load_completed()
 
