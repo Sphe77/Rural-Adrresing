@@ -19,11 +19,6 @@ def load_shapefile():
         raise FileNotFoundError(f"Shapefile not found at {shp_path}")
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)
-
-    # Rename 'NAME' to 'SUBURB' if needed
-    if "NAME" in gdf.columns and "SUBURB" not in gdf.columns:
-        gdf.rename(columns={"NAME": "SUBURB"}, inplace=True)
-
     return gdf
 
 # --- Load completed suburbs ---
