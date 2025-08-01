@@ -19,6 +19,11 @@ def load_shapefile():
         raise FileNotFoundError(f"Shapefile not found at {shp_path}")
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)
+
+    # Rename 'NAME' to 'SUBURB' if needed
+    if "NAME" in gdf.columns and "SUBURB" not in gdf.columns:
+        gdf.rename(columns={"NAME": "SUBURB"}, inplace=True)
+
     return gdf
 
 # --- Load completed suburbs ---
@@ -33,7 +38,7 @@ def load_completed():
                 if len(row) < 2:
                     continue
                 editor, suburb = row
-                completed.setdefault(editor, set()).add(suburb)
+                completed.setdefault(editor.strip(), set()).add(suburb.strip().title())
     return completed
 
 # --- Save completed suburbs ---
@@ -73,9 +78,13 @@ if not required_cols.issubset(gdf.columns):
     st.stop()
 
 editors = sorted(gdf["Assigned"].dropna().unique())
+if not editors:
+    st.error("No editors assigned in the shapefile. Please check the 'Assigned' column.")
+    st.stop()
+
 selected_editor = st.sidebar.selectbox("👤 Select your name (editor)", editors)
 
-editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("NAME")
+editor_suburbs_df = gdf[gdf["Assigned"] == selected_editor].sort_values("SUBURB")
 editor_suburb_names = editor_suburbs_df["SUBURB"].tolist()
 previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
 
@@ -104,8 +113,7 @@ def determine_status(row):
     return "Not Started", None
 
 status_editor_list = gdf.apply(lambda row: determine_status(row), axis=1)
-gdf["status"] = status_editor_list.str[0]
-gdf["EditorDone"] = status_editor_list.str[1]
+gdf[["status", "EditorDone"]] = pd.DataFrame(status_editor_list.tolist(), index=gdf.index)
 
 # --- Assign color per editor ---
 editor_colors = get_editor_colors(editors)
@@ -143,14 +151,16 @@ legend_template = f"""
 {{% macro html(this, kwargs) %}}
 <div style="
     position: fixed;
-    bottom: 40px;
-    left: 40px;
+    bottom: 10px;
+    left: 10px;
     z-index: 9999;
     background-color: white;
     padding: 10px;
     border: 2px solid grey;
     box-shadow: 2px 2px 6px rgba(0,0,0,0.3);
     font-size: 14px;
+    max-height: 300px;
+    overflow-y: auto;
 ">
     <b>Legend</b><br>
     {legend_items}
