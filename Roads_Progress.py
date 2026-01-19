@@ -43,7 +43,6 @@ def load_shapefile():
     gdf = gpd.read_file(shp_path)
     gdf = gdf.to_crs(epsg=4326)
     
-    # Apply manual assignment overrides
     if os.path.exists(ASSIGNMENT_FILE):
         overrides = pd.read_csv(ASSIGNMENT_FILE)
         mapping = dict(zip(overrides['SUBURB'], overrides['Assigned']))
@@ -175,18 +174,8 @@ for ed in editors:
     ed_gdf = gdf[gdf["Assigned"] == ed]
     total_assigned = len(ed_gdf)
     completed_count = len(ed_gdf[ed_gdf["status"] == "Complete"])
-    
-    if total_assigned > 0:
-        prog = f"{round((completed_count / total_assigned) * 100, 1)}%"
-    else:
-        prog = "0%"
-        
-    summary_data.append({
-        "Editor": ed, 
-        "Completed": completed_count, 
-        "Total Assigned": total_assigned, 
-        "Progress": prog
-    })
+    prog = f"{round((completed_count / total_assigned) * 100, 1)}%" if total_assigned > 0 else "0%"
+    summary_data.append({"Editor": ed, "Completed": completed_count, "Total Assigned": total_assigned, "Progress": prog})
 
 if summary_data:
     st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
@@ -197,5 +186,3 @@ total_all = len(gdf)
 done_all = len(gdf[gdf["status"] == "Complete"])
 st.metric("Total Completion", f"{round((done_all/total_all)*100, 1)}%", f"{done_all}/{total_all} Suburbs")
 st.progress(done_all/total_all)
-
-
