@@ -106,6 +106,7 @@ with st.sidebar.expander("⚙️ Admin: Reassign Suburbs"):
         st.rerun()
 
 # --- Sidebar: Editor Progress ---
+st.sidebar.markdown("---")
 selected_editor = st.sidebar.selectbox("👤 Select your name", editors)
 editor_suburbs = gdf[gdf["Assigned"] == selected_editor]["SUBURB"].tolist()
 previously_selected = list(completed_suburbs_by_editor.get(selected_editor, set()))
@@ -124,7 +125,8 @@ if st.sidebar.button("💾 Save Progress"):
 # --- Process Status ---
 def determine_status(row):
     for editor, suburbs in completed_suburbs_by_editor.items():
-        if row["SUBURB"] in suburbs: return "Complete", editor
+        if row["SUBURB"] in suburbs: 
+            return "Complete", editor
     return "Not Started", None
 
 status_data = gdf.apply(determine_status, axis=1)
@@ -139,14 +141,14 @@ for _, row in gdf.iterrows():
     folium.GeoJson(
         row["geometry"],
         style_function=lambda _, color=color: {"fillColor": color, "color": "black", "weight": 0.5, "fillOpacity": 0.5},
-        tooltip=f"{row['SUBURB']} | {row['Assigned']} | {row['status']}"
+        tooltip=f"{row['SUBURB']} | Assigned: {row['Assigned']} | Status: {row['status']}"
     ).add_to(m)
 
-# --- Legend (Fixed) ---
+# --- Legend ---
 legend_items_html = "".join([f"<i style='background:{c};width:12px;height:12px;display:inline-block;'></i> {e}<br>" for e, c in editor_colors.items()])
 legend_template = """
 {% macro html(this, kwargs) %}
-<div style="position: fixed; bottom: 50px; left: 50px; width: 160px; background: white; border: 2px solid grey; z-index: 9999; padding: 10px;">
+<div style="position: fixed; bottom: 50px; left: 50px; width: 160px; background: white; border: 2px solid grey; z-index: 9999; padding: 10px; font-size: 14px;">
 <b>Legend</b><br>{{ITEMS}}<i style='background:gray;width:12px;height:12px;display:inline-block;'></i> Not Started</div>
 {% endmacro %}
 """.replace("{{ITEMS}}", legend_items_html)
@@ -154,22 +156,46 @@ legend = MacroElement(); legend._template = Template(legend_template)
 m.get_root().add_child(legend)
 st_folium(m, width=1000, height=500)
 
-# --- AUDIT: Find that missing 0.5% ---
+# --- AUDIT: Find missing 0.5% ---
 st.markdown("---")
 st.subheader("🔍 Missing Suburbs Audit")
 incomplete = gdf[gdf["status"] != "Complete"]
 
 if incomplete.empty:
-    st.success("🎉 100% Complete!")
+    st.success("🎉 All suburbs are marked as complete! 100% reached.")
 else:
     st.warning(f"Remaining {len(incomplete)} suburb(s) to reach 100%:")
     audit_df = incomplete[["SUBURB", "Assigned"]].fillna("⚠️ UNASSIGNED")
-    st.dataframe(audit_df, use_container_width=True)
+    st.dataframe(audit_df, use_container_width=True, hide_index=True)
 
-# --- Stats ---
-st.subheader("📊 Stats")
-total, done = len(gdf), len(gdf[gdf["status"] == "Complete"])
-st.metric("Total Progress", f"{round((done/total)*100, 1)}%", f"{done}/{total}")
-st.progress(done/total)
+# --- Editor Progress Summary ---
+st.subheader("👥 Editor Progress Summary")
+summary_data = []
+for ed in editors:
+    ed_gdf = gdf[gdf["Assigned"] == ed]
+    total_assigned = len(ed_gdf)
+    completed_count = len(ed_gdf[ed_gdf["status"] == "Complete"])
+    
+    if total_assigned > 0:
+        prog = f"{round((completed_count / total_assigned) * 100, 1)}%"
+    else:
+        prog = "0%"
+        
+    summary_data.append({
+        "Editor": ed, 
+        "Completed": completed_count, 
+        "Total Assigned": total_assigned, 
+        "Progress": prog
+    })
+
+if summary_data:
+    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+
+# --- Total Progress Stats ---
+st.subheader("📊 Overall Statistics")
+total_all = len(gdf)
+done_all = len(gdf[gdf["status"] == "Complete"])
+st.metric("Total Completion", f"{round((done_all/total_all)*100, 1)}%", f"{done_all}/{total_all} Suburbs")
+st.progress(done_all/total_all)
 
 
