@@ -4,3 +4,6 @@ geopandas
 streamlit-folium
 folium
 pandas
+PyGithub
+branca
+streamlit
